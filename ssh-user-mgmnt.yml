@@ -1,0 +1,116 @@
+---
+- name: Bulk user setup with SSH and sudo access with proper permissions
+  hosts: servers
+  become: yes
+
+  vars:
+    user_list:
+      - apurba
+      - azim
+      - rashed
+
+  tasks:
+
+    - name: Create user with home and shell
+      user:
+        name: "{{ item }}"
+        shell: /bin/bash
+        create_home: yes
+      loop: "{{ user_list }}"
+
+    - name: Create .ssh directory
+      file:
+        path: "/home/{{ item }}/.ssh"
+        state: directory
+        mode: '0700'
+        owner: "{{ item }}"
+        group: "{{ item }}"
+      loop: "{{ user_list }}"
+
+    - name: Copy directory from Ansible control node to remote host
+      copy:
+        src: /etc/ansible/keys/
+        dest: /home/keys/
+        owner: root
+        group: root
+        mode: '0755'
+        remote_src: no
+
+    - name: Create empty authorized_keys file
+      file:
+        path: "/home/{{ item }}/.ssh/authorized_keys"
+        state: touch
+        mode: '0600'
+        owner: "{{ item }}"
+        group: "{{ item }}"
+      loop: "{{ user_list }}"
+
+    - name: Read public key content
+      slurp:
+        src: "/home/keys/{{ item }}"
+      register: user_keys
+      loop: "{{ user_list }}"
+
+    - name: Write public key into authorized_keys
+      copy:
+        content: "{{ item.content | b64decode }}"
+        dest: "/home/{{ item.item }}/.ssh/authorized_keys"
+        owner: "{{ item.item }}"
+        group: "{{ item.item }}"
+        mode: '0600'
+      loop: "{{ user_keys.results }}"
+
+    - name: Ensure correct ownership on .ssh directory
+      file:
+        path: "/home/{{ item }}/.ssh"
+        state: directory
+        recurse: yes
+        owner: "{{ item }}"
+        group: "{{ item }}"
+      loop: "{{ user_list }}"
+
+    - name: Create sudoers file for users
+      copy:
+        dest: /etc/sudoers.d/custom_users
+        content: |
+          apurba  ALL=(ALL)       ALL
+          azim    ALL=(ALL)       ALL
+          imran   ALL=(ALL)       ALL
+          mahrab  ALL=(ALL)       ALL
+          mamun   ALL=(ALL)       ALL
+          mim     ALL=(ALL)       ALL
+          mushfiq ALL=(ALL)       ALL
+          rashed  ALL=(ALL)       ALL
+          sabaoon ALL=(ALL)       ALL
+          syuji   ALL=(ALL)       ALL
+          tamoi   ALL=(ALL)       ALL
+          towfiq  ALL=(ALL)       ALL
+        owner: root
+        group: root
+        mode: '0440'
+      tags: sudo
+
+    - name: Append custom SSH settings
+      blockinfile:
+        path: /etc/ssh/sshd_config
+        marker: "# {mark} ANSIBLE MANAGED BLOCK - CUSTOM SSH SETTINGS"
+        block: |
+          Port 22
+          LogLevel INFO
+          PermitRootLogin yes
+          PermitEmptyPasswords no
+          PasswordAuthentication no
+          PubkeyAuthentication yes
+          ChallengeResponseAuthentication yes
+          X11Forwarding no
+          Banner /etc/ssh/hidden.txt
+          AllowUsers apurba azim ec2-user imran mahrab mamun mim mushfiq rashed root syuji tamoi towfiq ubuntu
+
+    - name: Delete user password
+      command: "passwd -d {{ item }}"
+      loop: "{{ user_list }}"
+
+    - name: Restart SSH service to apply changes
+      ansible.builtin.service:
+        name: sshd
+        state: restarted
